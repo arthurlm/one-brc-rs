@@ -1,0 +1,17 @@
+[package]
+name = "one-brc-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bytes = "1.5.0"
+fasthash = "0.4.0"
+fixed = "1.24.0"
+fxhash = "0.2.1"
+libc = "0.2.152"
+rayon = "1.8.1"
+
+[profile.release]
+debug = true
+lto = true
+panic = "abort"
