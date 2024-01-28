@@ -13,7 +13,7 @@ use std::{
 
 use fixed::types::I48F16;
 use fxhash::FxHashMap;
-use rayon::{iter::ParallelIterator, slice::ParallelSlice};
+use rayon::prelude::*;
 
 type Number = I48F16;
 type Db<'a> = HashMap<usize, Record<'a>, BuildHasherDefault<NullHasher>>;
@@ -95,6 +95,7 @@ struct Record<'a> {
 }
 
 impl<'a> Record<'a> {
+    #[inline(always)]
     fn new(city: &'a [u8], value: Number) -> Self {
         Self {
             city,
@@ -105,6 +106,7 @@ impl<'a> Record<'a> {
         }
     }
 
+    #[inline(always)]
     fn add(&mut self, value: Number) {
         self.min = cmp::min(self.min, value);
         self.max = cmp::max(self.max, value);
@@ -112,6 +114,7 @@ impl<'a> Record<'a> {
         self.count += 1;
     }
 
+    #[inline(always)]
     fn merge(&mut self, other: &Self) {
         self.min = self.min.min(other.min);
         self.max = self.min.max(other.max);
@@ -120,6 +123,7 @@ impl<'a> Record<'a> {
     }
 }
 
+#[inline(always)]
 fn fast_parse(input: &[u8]) -> Number {
     let (neg, i1, i2, f) = unsafe {
         match (
@@ -149,6 +153,12 @@ fn fast_parse(input: &[u8]) -> Number {
 }
 
 fn compute() -> io::Result<()> {
+    // Warm up global thread pool.
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(31)
+        .build_global()
+        .expect("Fail to startup rayon thread pool");
+
     // Open file and memory map it.
     let file = fs::File::open("measurements.txt")?;
     let mmap_file = MmapedFile::from_file(file)?;

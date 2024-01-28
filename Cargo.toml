@@ -12,6 +12,7 @@ rayon = "1.8.1"
 
 [profile.release]
 opt-level = 3
-debug = true
+# debug = true
 lto = true
 panic = "abort"
+strip = true
