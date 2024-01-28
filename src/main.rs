@@ -5,7 +5,7 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     fs,
     hash::{BuildHasherDefault, Hasher},
-    io::{self},
+    io::{self, stdout, Write},
     os::{fd::AsRawFd, raw::c_void},
     slice,
     time::Instant,
@@ -124,6 +124,11 @@ impl<'a> Record<'a> {
         self.sum += other.sum;
         self.count += other.count;
     }
+
+    #[inline(always)]
+    fn avg(&self) -> Number {
+        self.sum / Number::from_num(self.count)
+    }
 }
 
 #[inline(always)]
@@ -220,8 +225,44 @@ fn compute() -> io::Result<()> {
             map1
         });
 
-    println!("DB size: {}", db.keys().len());
-    // println!("DB size: {}", db);
+    // Extract record from aggregated DB and sort them by city name.
+    let mut records: Vec<_> = db.values().collect();
+    records.sort_unstable_by_key(|x| x.city);
+
+    // Allocate output buffer
+    let est_record_size =
+            20 // enough space for city name
+            + 1 // eq
+            + (3 * 5) // values
+            + 2 // slashes
+            + 2 // comma-space
+        ;
+
+    let mut out: Vec<u8> = Vec::with_capacity(records.len() * est_record_size);
+    out.push(b'{');
+
+    // Write all records to output buffer
+    for (idx, record) in records.into_iter().enumerate() {
+        if idx > 0 {
+            out.extend_from_slice(b", ");
+        }
+
+        out.extend_from_slice(record.city);
+        out.push(b'=');
+        write!(
+            out,
+            "{:.1}/{:.1}/{:.1}",
+            record.min,
+            record.avg(),
+            record.max
+        )?;
+    }
+
+    out.extend_from_slice(b"}\n");
+
+    // Write everything to stdout
+    stdout().lock().write_all(&out)?;
+
     Ok(())
 }
 
