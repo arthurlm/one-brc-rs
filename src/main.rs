@@ -173,7 +173,18 @@ fn compute() -> io::Result<()> {
         .par_split(|x| *x == b'\n')
         // Parse each line assuming there are only 2 elements on it.
         .filter_map(|line| {
-            let sep_index = line.iter().position(|x| *x == b';')?;
+            // Break if line is empty.
+            if line.is_empty() {
+                return None;
+            }
+
+            // Search separator backward ignoring at least the last 3 chars since there is a number
+            // at the end of the line (like 9.3).
+            let mut sep_index = line.len() - 3;
+            while line[sep_index] != b';' {
+                sep_index -= 1
+            }
+
             let city = &line[..sep_index];
             let temp = fast_parse(&line[sep_index + 1..]);
             // Compute city hash here, if there are multiple city with same hash, they will collide 🐞.
@@ -216,6 +227,7 @@ fn compute() -> io::Result<()> {
         );
 
     println!("DB size: {}", db.keys().len());
+    // println!("DB size: {}", db);
     Ok(())
 }
 
