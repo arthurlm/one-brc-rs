@@ -2,8 +2,9 @@
 
 use std::{
     cmp,
-    collections::{hash_map::Entry, BTreeMap, HashMap},
+    collections::{hash_map::Entry, HashMap},
     fs,
+    hash::{BuildHasherDefault, Hasher},
     io::{self},
     os::{fd::AsRawFd, raw::c_void},
     slice,
@@ -15,7 +16,30 @@ use fxhash::FxHashMap;
 use rayon::{iter::ParallelIterator, slice::ParallelSlice};
 
 type Number = I48F16;
-type Db<'a> = FxHashMap<usize, Record<'a>>;
+type Db<'a> = HashMap<usize, Record<'a>, BuildHasherDefault<NullHasher>>;
+
+#[derive(Debug, Default)]
+struct NullHasher {
+    value: usize,
+}
+
+impl Hasher for NullHasher {
+    #[inline(always)]
+    fn write(&mut self, _bytes: &[u8]) {
+        unreachable!("Not available generic hash function")
+    }
+
+    #[inline(always)]
+    fn write_usize(&mut self, i: usize) {
+        debug_assert_eq!(self.value, 0);
+        self.value = i;
+    }
+
+    #[inline(always)]
+    fn finish(&self) -> u64 {
+        self.value as u64
+    }
+}
 
 struct MmapedFile {
     addr: *mut c_void,
@@ -32,7 +56,7 @@ impl MmapedFile {
                 std::ptr::null_mut(),
                 file_size as libc::size_t,
                 libc::PROT_READ,
-                libc::MAP_PRIVATE | libc::MAP_NONBLOCK,
+                libc::MAP_PRIVATE,
                 fd,
                 0,
             );
@@ -81,7 +105,6 @@ impl<'a> Record<'a> {
         }
     }
 
-    #[inline(always)]
     fn add(&mut self, value: Number) {
         self.min = cmp::min(self.min, value);
         self.max = cmp::max(self.max, value);
@@ -89,7 +112,6 @@ impl<'a> Record<'a> {
         self.count += 1;
     }
 
-    #[inline(always)]
     fn merge(&mut self, other: &Self) {
         self.min = self.min.min(other.min);
         self.max = self.min.max(other.max);
@@ -98,7 +120,6 @@ impl<'a> Record<'a> {
     }
 }
 
-#[inline(always)]
 fn fast_parse(input: &[u8]) -> Number {
     let (neg, i1, i2, f) = unsafe {
         match (
