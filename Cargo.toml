@@ -15,3 +15,4 @@ opt-level = 3
 lto = true
 panic = "abort"
 strip = true
+incremental = false
