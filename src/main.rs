@@ -1,5 +1,3 @@
-#![allow(dead_code, unused_imports)]
-
 use std::{
     cmp,
     collections::{hash_map::Entry, HashMap},
@@ -12,7 +10,6 @@ use std::{
 };
 
 use fixed::types::I48F16;
-use fxhash::FxHashMap;
 use rayon::prelude::*;
 
 type Number = I48F16;
