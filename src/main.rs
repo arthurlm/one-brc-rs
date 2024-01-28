@@ -191,40 +191,34 @@ fn compute() -> io::Result<()> {
             (fxhash::hash(city), city, temp)
         })
         // Insert every entry to the DB.
-        .fold(
-            || Db::default(),
-            |mut map, (code, city, temp)| {
-                match map.entry(code) {
+        .fold(Db::default, |mut map, (code, city, temp)| {
+            match map.entry(code) {
+                Entry::Occupied(entry) => {
+                    debug_assert_eq!(entry.get().city, city);
+                    entry.into_mut().add(temp);
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(Record::new(city, temp));
+                }
+            }
+
+            map
+        })
+        .reduce(Db::default, |mut map1, map2| {
+            for (code, record) in map2 {
+                match map1.entry(code) {
                     Entry::Occupied(entry) => {
-                        debug_assert_eq!(entry.get().city, city);
-                        entry.into_mut().add(temp);
+                        debug_assert_eq!(entry.get().city, record.city);
+                        entry.into_mut().merge(&record);
                     }
                     Entry::Vacant(entry) => {
-                        entry.insert(Record::new(city, temp));
+                        entry.insert(record);
                     }
                 }
+            }
 
-                map
-            },
-        )
-        .reduce(
-            || Db::default(),
-            |mut map1, map2| {
-                for (code, record) in map2 {
-                    match map1.entry(code) {
-                        Entry::Occupied(entry) => {
-                            debug_assert_eq!(entry.get().city, record.city);
-                            entry.into_mut().merge(&record);
-                        }
-                        Entry::Vacant(entry) => {
-                            entry.insert(record);
-                        }
-                    }
-                }
-
-                map1
-            },
-        );
+            map1
+        });
 
     println!("DB size: {}", db.keys().len());
     // println!("DB size: {}", db);
