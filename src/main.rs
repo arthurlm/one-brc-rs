@@ -169,14 +169,14 @@ fn compute() -> io::Result<()> {
     let db = mmap_file
         // Convert memory mapped file to bytes slice.
         .as_slice()
+        // Ignore last line break to remove empty lines.
+        .strip_suffix(b"\n")
+        .expect("Cannot strip line suffix")
         // Iterate over each line on a thread pool.
         .par_split(|x| *x == b'\n')
         // Parse each line assuming there are only 2 elements on it.
-        .filter_map(|line| {
-            // Break if line is empty.
-            if line.is_empty() {
-                return None;
-            }
+        .map(|line| {
+            debug_assert!(!line.is_empty());
 
             // Search separator backward ignoring at least the last 3 chars since there is a number
             // at the end of the line (like 9.3).
@@ -188,7 +188,7 @@ fn compute() -> io::Result<()> {
             let city = &line[..sep_index];
             let temp = fast_parse(&line[sep_index + 1..]);
             // Compute city hash here, if there are multiple city with same hash, they will collide 🐞.
-            Some((fxhash::hash(city), city, temp))
+            (fxhash::hash(city), city, temp)
         })
         // Insert every entry to the DB.
         .fold(
