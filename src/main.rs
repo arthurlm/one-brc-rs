@@ -1,8 +1,8 @@
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 use std::{
     cmp,
-    collections::hash_map::Entry,
+    collections::{hash_map::Entry, BTreeMap, HashMap},
     fs,
     io::{self},
     os::{fd::AsRawFd, raw::c_void},
@@ -15,7 +15,7 @@ use fxhash::FxHashMap;
 use rayon::{iter::ParallelIterator, slice::ParallelSlice};
 
 type Number = I48F16;
-type Db<'a> = FxHashMap<&'a [u8], Record>;
+type Db<'a> = FxHashMap<usize, Record<'a>>;
 
 struct MmapedFile {
     addr: *mut c_void,
@@ -62,16 +62,18 @@ impl Drop for MmapedFile {
 }
 
 #[derive(Debug)]
-struct Record {
+struct Record<'a> {
+    city: &'a [u8],
     min: Number,
     max: Number,
     sum: Number,
     count: usize,
 }
 
-impl Record {
-    fn new(value: Number) -> Self {
+impl<'a> Record<'a> {
+    fn new(city: &'a [u8], value: Number) -> Self {
         Self {
+            city,
             min: value,
             max: value,
             sum: value,
@@ -130,7 +132,7 @@ fn compute() -> io::Result<()> {
     let file = fs::File::open("measurements.txt")?;
     let mmap_file = MmapedFile::from_file(file)?;
 
-    let _db = mmap_file
+    let db = mmap_file
         // Convert memory mapped file to bytes slice.
         .as_slice()
         // Iterate over each line on a thread pool.
@@ -140,18 +142,20 @@ fn compute() -> io::Result<()> {
             let sep_index = line.iter().position(|x| *x == b';')?;
             let city = &line[..sep_index];
             let temp = fast_parse(&line[sep_index + 1..]);
-            Some((city, temp))
+            // Compute city hash here, if there are multiple city with same hash, they will collide 🐞.
+            Some((fxhash::hash(city), city, temp))
         })
         // Insert every entry to the DB.
         .fold(
             || Db::default(),
-            |mut map, (city, temp)| {
-                match map.entry(city) {
+            |mut map, (code, city, temp)| {
+                match map.entry(code) {
                     Entry::Occupied(entry) => {
+                        debug_assert_eq!(entry.get().city, city);
                         entry.into_mut().add(temp);
                     }
                     Entry::Vacant(entry) => {
-                        entry.insert(Record::new(temp));
+                        entry.insert(Record::new(city, temp));
                     }
                 }
 
@@ -161,9 +165,10 @@ fn compute() -> io::Result<()> {
         .reduce(
             || Db::default(),
             |mut map1, map2| {
-                for (city, record) in map2 {
-                    match map1.entry(city) {
+                for (code, record) in map2 {
+                    match map1.entry(code) {
                         Entry::Occupied(entry) => {
+                            debug_assert_eq!(entry.get().city, record.city);
                             entry.into_mut().merge(&record);
                         }
                         Entry::Vacant(entry) => {
@@ -176,6 +181,7 @@ fn compute() -> io::Result<()> {
             },
         );
 
+    println!("DB size: {}", db.keys().len());
     Ok(())
 }
 
