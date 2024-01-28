@@ -119,8 +119,8 @@ impl<'a> Record<'a> {
 
     #[inline(always)]
     fn merge(&mut self, other: &Self) {
-        self.min = self.min.min(other.min);
-        self.max = self.min.max(other.max);
+        self.min = cmp::min(self.min, other.min);
+        self.max = cmp::max(self.max, other.max);
         self.sum += other.sum;
         self.count += other.count;
     }
