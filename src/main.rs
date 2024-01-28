@@ -155,7 +155,7 @@ fn fast_parse(input: &[u8]) -> Number {
 fn compute() -> io::Result<()> {
     // Warm up global thread pool.
     rayon::ThreadPoolBuilder::new()
-        .num_threads(31)
+        .stack_size(256 << 10) // Set a small stack size for our threads so we have more cache available.
         .build_global()
         .expect("Fail to startup rayon thread pool");
 
