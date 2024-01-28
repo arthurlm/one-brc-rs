@@ -18,6 +18,10 @@ use rayon::prelude::*;
 type Number = I48F16;
 type Db<'a> = HashMap<usize, Record<'a>, BuildHasherDefault<NullHasher>>;
 
+/// Null hasher.
+///
+/// Since we have already hash city names before inserting them in HashMap, I write
+/// this `Hasher` which is a No-Op implementation.
 #[derive(Debug, Default)]
 struct NullHasher {
     value: usize,
@@ -41,6 +45,7 @@ impl Hasher for NullHasher {
     }
 }
 
+/// Wrapper above unsafe libc call for memory mapping management.
 struct MmapedFile {
     addr: *mut c_void,
     data_len: usize,
@@ -131,29 +136,35 @@ impl<'a> Record<'a> {
     }
 }
 
+/// Fast fixed number parser.
+///
+/// Do not work for general purpose number parsing.
+///
+/// The whole function is mark as unsafe since it use `slice::get_unchecked` to access input values.
+/// I did not find any other way to fully remove bound check otherwise.
+///
+/// You can check output code on GodBolt here: <https://godbolt.org/z/Mdq1ExfTM>
 #[inline(always)]
-fn fast_parse(input: &[u8]) -> Number {
-    let (neg, i1, i2, f) = unsafe {
-        match (
-            *input.get_unchecked(0),
-            *input.get_unchecked(1),
-            *input.get_unchecked(2),
-        ) {
-            (b'-', x, b'.') => (true, 0, (x & 0x0F) as i16 * 10, *input.get_unchecked(3)),
-            (b'-', x, y) => (
-                true,
-                (x & 0x0F) as i16 * 100,
-                (y & 0x0F) as i16 * 10,
-                *input.get_unchecked(4),
-            ),
-            (x, y, b'.') => (
-                false,
-                (x & 0x0F) as i16 * 100,
-                (y & 0x0F) as i16 * 10,
-                *input.get_unchecked(3),
-            ),
-            (x, _, y) => (false, 0, (x & 0x0F) as i16 * 10, y),
-        }
+unsafe fn fast_fixed_num_parse(input: &[u8]) -> Number {
+    let (neg, i1, i2, f) = match (
+        *input.get_unchecked(0),
+        *input.get_unchecked(1),
+        *input.get_unchecked(2),
+    ) {
+        (b'-', x, b'.') => (true, 0, (x & 0x0F) as i16 * 10, *input.get_unchecked(3)),
+        (b'-', x, y) => (
+            true,
+            (x & 0x0F) as i16 * 100,
+            (y & 0x0F) as i16 * 10,
+            *input.get_unchecked(4),
+        ),
+        (x, y, b'.') => (
+            false,
+            (x & 0x0F) as i16 * 100,
+            (y & 0x0F) as i16 * 10,
+            *input.get_unchecked(3),
+        ),
+        (x, _, y) => (false, 0, (x & 0x0F) as i16 * 10, y),
     };
 
     let output = i1 + i2 + (f & 0x0F) as i16;
@@ -163,7 +174,7 @@ fn fast_parse(input: &[u8]) -> Number {
 fn compute() -> io::Result<()> {
     // Warm up global thread pool.
     rayon::ThreadPoolBuilder::new()
-        .stack_size(256 << 10) // Set a small stack size for our threads so we have more cache available.
+        .stack_size(256 << 10) // Set a small stack size for our threads so we have more CPU cache available.
         .build_global()
         .expect("Fail to startup rayon thread pool");
 
@@ -190,8 +201,10 @@ fn compute() -> io::Result<()> {
                 sep_index -= 1
             }
 
+            // Create ref on city name and parse temperature.
             let city = &line[..sep_index];
-            let temp = fast_parse(&line[sep_index + 1..]);
+            let temp = unsafe { fast_fixed_num_parse(&line[sep_index + 1..]) };
+
             // Compute city hash here, if there are multiple city with same hash, they will collide 🐞.
             (fxhash::hash(city), city, temp)
         })
@@ -226,10 +239,10 @@ fn compute() -> io::Result<()> {
         });
 
     // Extract record from aggregated DB and sort them by city name.
-    let mut records: Vec<_> = db.values().collect();
+    let mut records: Vec<_> = db.into_values().collect();
     records.sort_unstable_by_key(|x| x.city);
 
-    // Allocate output buffer
+    // Allocate output buffer.
     let est_record_size =
             20 // enough space for city name
             + 1 // eq
@@ -241,7 +254,7 @@ fn compute() -> io::Result<()> {
     let mut out: Vec<u8> = Vec::with_capacity(records.len() * est_record_size);
     out.push(b'{');
 
-    // Write all records to output buffer
+    // Write all records to output buffer.
     for (idx, record) in records.into_iter().enumerate() {
         if idx > 0 {
             out.extend_from_slice(b", ");
@@ -284,9 +297,18 @@ mod tests {
             Number::from(x) / Number::from(10)
         }
 
-        assert_eq!(fast_parse(b"8.5"), one_digit_fixed(85));
-        assert_eq!(fast_parse(b"-6.9"), one_digit_fixed(-69));
-        assert_eq!(fast_parse(b"42.3"), one_digit_fixed(423));
-        assert_eq!(fast_parse(b"-86.1"), one_digit_fixed(-861));
+        assert_eq!(unsafe { fast_fixed_num_parse(b"8.5") }, one_digit_fixed(85));
+        assert_eq!(
+            unsafe { fast_fixed_num_parse(b"-6.9") },
+            one_digit_fixed(-69)
+        );
+        assert_eq!(
+            unsafe { fast_fixed_num_parse(b"42.3") },
+            one_digit_fixed(423)
+        );
+        assert_eq!(
+            unsafe { fast_fixed_num_parse(b"-86.1") },
+            one_digit_fixed(-861)
+        );
     }
 }
