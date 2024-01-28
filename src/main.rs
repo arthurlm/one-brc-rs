@@ -77,13 +77,16 @@ impl MmapedFile {
     }
 }
 
-impl Drop for MmapedFile {
-    fn drop(&mut self) {
-        unsafe {
-            libc::munmap(self.addr, self.data_len);
-        }
-    }
-}
+// 💩 do not clean our memory mapped segment.
+// I know this is sad, but it make us win 25ms...
+//
+// impl Drop for MmapedFile {
+//     fn drop(&mut self) {
+//         unsafe {
+//             libc::munmap(self.addr, self.data_len);
+//         }
+//     }
+// }
 
 #[derive(Debug)]
 struct Record<'a> {
