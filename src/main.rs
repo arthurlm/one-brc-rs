@@ -1,14 +1,12 @@
 use std::{
-    cmp,
-    collections::{hash_map::Entry, HashMap},
-    fs,
-    hash::{BuildHasherDefault, Hasher},
+    cmp, fs,
     io::{self, stdout, Write},
     os::{fd::AsRawFd, raw::c_void},
     slice,
     time::Instant,
 };
 
+use hashbrown::{hash_table::Entry, HashTable};
 use rayon::prelude::*;
 
 type FixedPrecisionNumber = fixed::types::I48F16;
@@ -19,34 +17,7 @@ fn to_fixed_number(measure: Measure) -> FixedPrecisionNumber {
     FixedPrecisionNumber::from(measure) / FixedPrecisionNumber::from(10)
 }
 
-type Db<'a> = HashMap<usize, Record<'a>, BuildHasherDefault<NullHasher>>;
-
-/// Null hasher.
-///
-/// Since we have already hash city names before inserting them in HashMap, I write
-/// this `Hasher` which is a No-Op implementation.
-#[derive(Debug, Default)]
-struct NullHasher {
-    value: usize,
-}
-
-impl Hasher for NullHasher {
-    #[inline(always)]
-    fn write(&mut self, _bytes: &[u8]) {
-        unreachable!("Not available generic hash function")
-    }
-
-    #[inline(always)]
-    fn write_usize(&mut self, i: usize) {
-        debug_assert_eq!(self.value, 0);
-        self.value = i;
-    }
-
-    #[inline(always)]
-    fn finish(&self) -> u64 {
-        self.value as u64
-    }
-}
+type Db<'a> = HashTable<(u64, Record<'a>)>;
 
 /// Wrapper above unsafe libc call for memory mapping management.
 struct MmapedFile {
@@ -187,6 +158,15 @@ unsafe fn fast_parse_line(line: &[u8]) -> (&[u8], Measure) {
     (city, temp)
 }
 
+fn find_map_entry<'db, 'data>(
+    map: &'db mut Db<'data>,
+    code: u64,
+) -> Entry<'db, (u64, Record<'data>)> {
+    // Intentionally use wrong eq operator (instead of city name) for better performances.
+    // If there are multiple city with same hash, they will collide 🐞.
+    map.entry(code, |(x, _)| *x == code, |(x, _)| *x)
+}
+
 fn compute() -> io::Result<()> {
     // Warm up global thread pool.
     rayon::ThreadPoolBuilder::new()
@@ -210,16 +190,15 @@ fn compute() -> io::Result<()> {
         .map(|line| unsafe { fast_parse_line(line) })
         // Insert every entry to thread local DB.
         .fold(Db::default, |mut map, (city, temp)| {
-            // Compute city hash here, if there are multiple city with same hash, they will collide 🐞.
-            let code = fxhash::hash(city);
+            let code = fxhash::hash64(city);
 
-            match map.entry(code) {
+            match find_map_entry(&mut map, code) {
                 Entry::Occupied(entry) => {
-                    debug_assert_eq!(entry.get().city, city);
-                    entry.into_mut().add(temp);
+                    debug_assert_eq!(entry.get().1.city, city);
+                    entry.into_mut().1.add(temp);
                 }
                 Entry::Vacant(entry) => {
-                    entry.insert(Record::new(city, temp));
+                    entry.insert((code, Record::new(city, temp)));
                 }
             }
 
@@ -228,13 +207,13 @@ fn compute() -> io::Result<()> {
         // Merge all DBs.
         .reduce(Db::default, |mut map1, map2| {
             for (code, record) in map2 {
-                match map1.entry(code) {
+                match find_map_entry(&mut map1, code) {
                     Entry::Occupied(entry) => {
-                        debug_assert_eq!(entry.get().city, record.city);
-                        entry.into_mut().merge(&record);
+                        debug_assert_eq!(entry.get().1.city, record.city);
+                        entry.into_mut().1.merge(&record);
                     }
                     Entry::Vacant(entry) => {
-                        entry.insert(record);
+                        entry.insert((code, record));
                     }
                 }
             }
@@ -243,7 +222,7 @@ fn compute() -> io::Result<()> {
         });
 
     // Extract record from aggregated DB and sort them by city name.
-    let mut records: Vec<_> = db.into_values().collect();
+    let mut records: Vec<_> = db.into_iter().map(|x| x.1).collect();
     records.sort_unstable_by_key(|x| x.city);
 
     // Allocate output buffer.

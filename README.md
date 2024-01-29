@@ -55,7 +55,7 @@ What works:
 
 1. I start from [mtb0x1](https://github.com/mtb0x1/1brc) implementation
 2. I have optimize a lot the line parsing using GodBolt compiler explorer (so is is only 46 assembly instruction now 😎).
-3. I compute `fxhash::hash(...)` only once and use a null hasher with `std::collections::HashMap`.
+3. I compute `fxhash::hash64(...)` only once and use raw `hashbrown::HashTable`.
 4. I use fixed point number computation only at the last moment.
 5. I have update thread stack size to have more CPU cache for the data.
 6. I do not `munmap` the data a let the OS releasing the memory.
