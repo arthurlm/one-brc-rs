@@ -206,15 +206,13 @@ fn compute() -> io::Result<()> {
         .expect("Cannot strip line suffix")
         // Iterate over each line on a thread pool.
         .par_split(|x| *x == b'\n')
-        .map(|line| {
-            // Parse each line assuming there are only 2 elements on it.
-            let (city, temp) = unsafe { fast_parse_line(line) };
-
+        // Parse each line assuming there are only 2 elements on it.
+        .map(|line| unsafe { fast_parse_line(line) })
+        // Insert every entry to thread local DB.
+        .fold(Db::default, |mut map, (city, temp)| {
             // Compute city hash here, if there are multiple city with same hash, they will collide 🐞.
-            (fxhash::hash(city), city, temp)
-        })
-        // Insert every entry to the DB.
-        .fold(Db::default, |mut map, (code, city, temp)| {
+            let code = fxhash::hash(city);
+
             match map.entry(code) {
                 Entry::Occupied(entry) => {
                     debug_assert_eq!(entry.get().city, city);
@@ -227,6 +225,7 @@ fn compute() -> io::Result<()> {
 
             map
         })
+        // Merge all DBs.
         .reduce(Db::default, |mut map1, map2| {
             for (code, record) in map2 {
                 match map1.entry(code) {
