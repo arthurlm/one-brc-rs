@@ -9,10 +9,16 @@ use std::{
     time::Instant,
 };
 
-use fixed::types::I48F16;
 use rayon::prelude::*;
 
-type Number = I48F16;
+type FixedPrecisionNumber = fixed::types::I48F16;
+type Measure = i16;
+
+#[inline(always)]
+fn to_fixed_number(measure: Measure) -> FixedPrecisionNumber {
+    FixedPrecisionNumber::from(measure) / FixedPrecisionNumber::from(10)
+}
+
 type Db<'a> = HashMap<usize, Record<'a>, BuildHasherDefault<NullHasher>>;
 
 /// Null hasher.
@@ -93,29 +99,29 @@ impl MmapedFile {
 #[derive(Debug)]
 struct Record<'a> {
     city: &'a [u8],
-    min: Number,
-    max: Number,
-    sum: Number,
+    min: Measure,
+    max: Measure,
+    sum: i32,
     count: usize,
 }
 
 impl<'a> Record<'a> {
     #[inline(always)]
-    fn new(city: &'a [u8], value: Number) -> Self {
+    fn new(city: &'a [u8], value: Measure) -> Self {
         Self {
             city,
             min: value,
             max: value,
-            sum: value,
+            sum: value as i32,
             count: 1,
         }
     }
 
     #[inline(always)]
-    fn add(&mut self, value: Number) {
+    fn add(&mut self, value: Measure) {
         self.min = cmp::min(self.min, value);
         self.max = cmp::max(self.max, value);
-        self.sum += value;
+        self.sum += value as i32;
         self.count += 1;
     }
 
@@ -128,8 +134,10 @@ impl<'a> Record<'a> {
     }
 
     #[inline(always)]
-    fn avg(&self) -> Number {
-        self.sum / Number::from_num(self.count)
+    fn avg(&self) -> FixedPrecisionNumber {
+        FixedPrecisionNumber::from(self.sum)
+            / FixedPrecisionNumber::from(10)
+            / FixedPrecisionNumber::from(self.count as i32)
     }
 }
 
@@ -142,7 +150,7 @@ impl<'a> Record<'a> {
 ///
 /// This function has been optimize with [GodBolt](https://godbolt.org/z/ojTzzYo9n) and takes only
 /// 46 assembly line.
-unsafe fn fast_parse_line(line: &[u8]) -> (&[u8], Number) {
+unsafe fn fast_parse_line(line: &[u8]) -> (&[u8], Measure) {
     let len = line.len();
 
     // We know in advance last 3 bytes are:
@@ -173,7 +181,7 @@ unsafe fn fast_parse_line(line: &[u8]) -> (&[u8], Number) {
 
     // Build number from what we have extracted.
     let temp_output = i1 + i2 + f;
-    let temp = Number::from(if neg { -temp_output } else { temp_output }) / Number::from(10);
+    let temp = if neg { -temp_output } else { temp_output };
 
     // Return result.
     (city, temp)
@@ -259,12 +267,13 @@ fn compute() -> io::Result<()> {
 
         out.extend_from_slice(record.city);
         out.push(b'=');
+
         write!(
             out,
             "{:.1}/{:.1}/{:.1}",
-            record.min,
+            to_fixed_number(record.min),
             record.avg(),
-            record.max
+            to_fixed_number(record.max),
         )?;
     }
 
@@ -290,8 +299,8 @@ mod tests {
 
     #[test]
     fn test_fast_parse() {
-        fn build_parsed_line(city: &[u8], x: i16) -> (&[u8], Number) {
-            (city, Number::from(x) / Number::from(10))
+        fn build_parsed_line(city: &[u8], x: Measure) -> (&[u8], Measure) {
+            (city, x)
         }
 
         // Test with no city name.
