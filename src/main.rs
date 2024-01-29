@@ -133,39 +133,50 @@ impl<'a> Record<'a> {
     }
 }
 
-/// Fast fixed number parser.
+/// Fast line parser.
 ///
-/// Do not work for general purpose number parsing.
+/// Parse everything in the line at once (city name + temp).
 ///
-/// The whole function is mark as unsafe since it use `slice::get_unchecked` to access input values.
+/// Do not work as a general purpose line parser and use a lot of UNSAFE!
 /// I did not find any other way to fully remove bound check otherwise.
 ///
-/// You can check output code on GodBolt here: <https://godbolt.org/z/Mdq1ExfTM>
-#[inline(always)]
-unsafe fn fast_fixed_num_parse(input: &[u8]) -> Number {
-    let (neg, i1, i2, f) = match (
-        *input.get_unchecked(0),
-        *input.get_unchecked(1),
-        *input.get_unchecked(2),
-    ) {
-        (b'-', x, b'.') => (true, 0, (x & 0x0F) as i16 * 10, *input.get_unchecked(3)),
-        (b'-', x, y) => (
-            true,
-            (x & 0x0F) as i16 * 100,
-            (y & 0x0F) as i16 * 10,
-            *input.get_unchecked(4),
-        ),
-        (x, y, b'.') => (
-            false,
-            (x & 0x0F) as i16 * 100,
-            (y & 0x0F) as i16 * 10,
-            *input.get_unchecked(3),
-        ),
-        (x, _, y) => (false, 0, (x & 0x0F) as i16 * 10, y),
+/// This function has been optimize with [GodBolt](https://godbolt.org/z/ojTzzYo9n) and takes only
+/// 46 assembly line.
+unsafe fn fast_parse_line(line: &[u8]) -> (&[u8], Number) {
+    let len = line.len();
+
+    // We know in advance last 3 bytes are:
+    // - the last temperature integer digit
+    // - a dot
+    // - the temperature floating part
+    let f = (*line.get_unchecked(len - 1) & 0x0F) as i16;
+    let i2 = (*line.get_unchecked(len - 3) & 0x0F) as i16 * 10;
+
+    // Parse remaining bytes:
+    // - neg sign ?
+    // - missing digit ?
+    // - missing digit and neg sign ?
+    let (sep_index, neg, i1) = match *line.get_unchecked(len - 4) {
+        b';' => (len - 4, false, 0),
+        b'-' => (len - 5, true, 0),
+        v => {
+            let i1 = (v & 0x0F) as i16 * 100;
+            match *line.get_unchecked(len - 5) {
+                b';' => (len - 5, false, i1),
+                _ => (len - 6, true, i1),
+            }
+        }
     };
 
-    let output = i1 + i2 + (f & 0x0F) as i16;
-    Number::from(if neg { -output } else { output }) / Number::from(10)
+    // Create slice reference for city name.
+    let city = line.get_unchecked(..sep_index);
+
+    // Build number from what we have extracted.
+    let temp_output = i1 + i2 + f;
+    let temp = Number::from(if neg { -temp_output } else { temp_output }) / Number::from(10);
+
+    // Return result.
+    (city, temp)
 }
 
 fn compute() -> io::Result<()> {
@@ -187,20 +198,9 @@ fn compute() -> io::Result<()> {
         .expect("Cannot strip line suffix")
         // Iterate over each line on a thread pool.
         .par_split(|x| *x == b'\n')
-        // Parse each line assuming there are only 2 elements on it.
         .map(|line| {
-            debug_assert!(!line.is_empty());
-
-            // Search separator backward ignoring at least the last 3 chars since there is a number
-            // at the end of the line (like 9.3).
-            let mut sep_index = line.len() - 3;
-            while line[sep_index] != b';' {
-                sep_index -= 1
-            }
-
-            // Create ref on city name and parse temperature.
-            let city = &line[..sep_index];
-            let temp = unsafe { fast_fixed_num_parse(&line[sep_index + 1..]) };
+            // Parse each line assuming there are only 2 elements on it.
+            let (city, temp) = unsafe { fast_parse_line(line) };
 
             // Compute city hash here, if there are multiple city with same hash, they will collide 🐞.
             (fxhash::hash(city), city, temp)
@@ -290,22 +290,62 @@ mod tests {
 
     #[test]
     fn test_fast_parse() {
-        fn one_digit_fixed(x: i16) -> Number {
-            Number::from(x) / Number::from(10)
+        fn build_parsed_line(city: &[u8], x: i16) -> (&[u8], Number) {
+            (city, Number::from(x) / Number::from(10))
         }
 
-        assert_eq!(unsafe { fast_fixed_num_parse(b"8.5") }, one_digit_fixed(85));
+        // Test with no city name.
         assert_eq!(
-            unsafe { fast_fixed_num_parse(b"-6.9") },
-            one_digit_fixed(-69)
+            unsafe { fast_parse_line(b";8.5") },
+            build_parsed_line(b"", 85)
         );
         assert_eq!(
-            unsafe { fast_fixed_num_parse(b"42.3") },
-            one_digit_fixed(423)
+            unsafe { fast_parse_line(b";-6.9") },
+            build_parsed_line(b"", -69)
         );
         assert_eq!(
-            unsafe { fast_fixed_num_parse(b"-86.1") },
-            one_digit_fixed(-861)
+            unsafe { fast_parse_line(b";42.3") },
+            build_parsed_line(b"", 423)
+        );
+        assert_eq!(
+            unsafe { fast_parse_line(b";-86.1") },
+            build_parsed_line(b"", -861)
+        );
+
+        // One char city name.
+        assert_eq!(
+            unsafe { fast_parse_line(b"X;8.5") },
+            build_parsed_line(b"X", 85)
+        );
+        assert_eq!(
+            unsafe { fast_parse_line(b"X;-6.9") },
+            build_parsed_line(b"X", -69)
+        );
+        assert_eq!(
+            unsafe { fast_parse_line(b"X;42.9") },
+            build_parsed_line(b"X", 429)
+        );
+        assert_eq!(
+            unsafe { fast_parse_line(b"X;-86.1") },
+            build_parsed_line(b"X", -861)
+        );
+
+        // Multi digit city name.
+        assert_eq!(
+            unsafe { fast_parse_line(b"Paris;8.5") },
+            build_parsed_line(b"Paris", 85)
+        );
+        assert_eq!(
+            unsafe { fast_parse_line(b"Paris;-6.9") },
+            build_parsed_line(b"Paris", -69)
+        );
+        assert_eq!(
+            unsafe { fast_parse_line(b"Paris;42.0") },
+            build_parsed_line(b"Paris", 420)
+        );
+        assert_eq!(
+            unsafe { fast_parse_line(b"Paris;-86.1") },
+            build_parsed_line(b"Paris", -861)
         );
     }
 }
