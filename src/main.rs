@@ -287,8 +287,7 @@ fn compute() -> io::Result<()> {
 fn main() -> io::Result<()> {
     let start_instant = Instant::now();
     compute()?;
-    println!("duration {:?}", start_instant.elapsed());
-
+    eprintln!("Inside main total duration: {:?}", start_instant.elapsed());
     Ok(())
 }
 
