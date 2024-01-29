@@ -205,9 +205,14 @@ fn compute() -> io::Result<()> {
             map
         })
         // Merge all DBs.
-        .reduce(Db::default, |mut map1, map2| {
-            for (code, record) in map2 {
-                match find_map_entry(&mut map1, code) {
+        .reduce(Db::default, |mut merged_map, sub_map| {
+            // Reserve some space in output DB for sub DB.
+            let new_element_count = sub_map.len().saturating_sub(merged_map.capacity());
+            merged_map.reserve(new_element_count, |x| x.0);
+
+            // Merge all elements.
+            for (code, record) in sub_map {
+                match find_map_entry(&mut merged_map, code) {
                     Entry::Occupied(entry) => {
                         debug_assert_eq!(entry.get().1.city, record.city);
                         entry.into_mut().1.merge(&record);
@@ -218,7 +223,7 @@ fn compute() -> io::Result<()> {
                 }
             }
 
-            map1
+            merged_map
         });
 
     // Extract record from aggregated DB and sort them by city name.
