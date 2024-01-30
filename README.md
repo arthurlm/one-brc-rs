@@ -21,6 +21,8 @@ So for every result, I will separate first run and real benchmark.
 sync; echo 1 > /proc/sys/vm/drop_caches
 ```
 
+Few utilities to deal with this can be found under the [utils](./utils/) directory.
+
 ### Java implementation
 
 I do not have GraalVm, so I will only run the best pure Java implementation.
