@@ -35,20 +35,29 @@ Elapsed=0:03.14
 # After few runs (so cache is now warm):
 ❯ \time -f 'Elapsed=%E' ./calculate_average_yourwass.sh > /dev/null
 Elapsed=0:00.93
+
+# With a RAM disk performances are constant but a little bit slower than pure memory cache.
+❯ \time -f 'Elapsed=%E' ./calculate_average_yourwass.sh > /dev/null
+Elapsed=0:01.07
 ```
 
 ### My implementation results
 
 ```sh
 # First run:
-\time -f 'Elapsed=%E' target/release/one-brc-rs
+\time -f 'Elapsed=%E' target/release/one-brc-rs  > /dev/null
 Inside main total duration: 2.781221427s
 Elapsed=0:02.96
 
 # After few runs (so cache is now warm):
-\time -f 'Elapsed=%E' target/release/one-brc-rs
+\time -f 'Elapsed=%E' target/release/one-brc-rs  > /dev/null
 Inside main total duration: 705.814095ms
 Elapsed=0:00.81
+
+# With a RAM disk performances are constant but a little bit slower than pure memory cache.
+❯ \time -f 'Elapsed=%E' target/release/one-brc-rs > /dev/null
+Inside main total duration: 892.661661ms
+Elapsed=0:00.97
 ```
 
 ## Inspiration and ideas
