@@ -1,5 +1,5 @@
 use std::{
-    cmp, fs,
+    fs,
     io::{self, stdout, Write},
     os::{fd::AsRawFd, raw::c_void},
     slice,
@@ -7,6 +7,7 @@ use std::{
 };
 
 use hashbrown::{hash_table::Entry, HashTable};
+use one_brc_rs::simd_buffers::SimdBuffer;
 use rayon::prelude::*;
 
 type FixedPrecisionNumber = fixed::types::I48F16;
@@ -67,11 +68,19 @@ impl MmapedFile {
 //     }
 // }
 
+#[inline(always)]
+fn buf_append(buf: &mut SimdBuffer, value: i16) {
+    if buf.is_full() {
+        buf.simplify_and_add(value);
+    } else {
+        buf.add(value);
+    }
+}
+
 #[derive(Debug)]
 struct Record<'a> {
     city: &'a [u8],
-    min: Measure,
-    max: Measure,
+    buf: SimdBuffer,
     sum: i32,
     count: usize,
 }
@@ -81,8 +90,7 @@ impl<'a> Record<'a> {
     fn new(city: &'a [u8], value: Measure) -> Self {
         Self {
             city,
-            min: value,
-            max: value,
+            buf: SimdBuffer::with_value(value),
             sum: value as i32,
             count: 1,
         }
@@ -90,16 +98,17 @@ impl<'a> Record<'a> {
 
     #[inline(always)]
     fn add(&mut self, value: Measure) {
-        self.min = cmp::min(self.min, value);
-        self.max = cmp::max(self.max, value);
+        buf_append(&mut self.buf, value);
+
         self.sum += value as i32;
         self.count += 1;
     }
 
     #[inline(always)]
     fn merge(&mut self, other: &Self) {
-        self.min = cmp::min(self.min, other.min);
-        self.max = cmp::max(self.max, other.max);
+        let (other_min, other_max) = other.buf.min_max();
+        buf_append(&mut self.buf, other_min);
+        buf_append(&mut self.buf, other_max);
         self.sum += other.sum;
         self.count += other.count;
     }
@@ -251,12 +260,14 @@ fn compute() -> io::Result<()> {
         out.extend_from_slice(record.city);
         out.push(b'=');
 
+        let (temp_min, temp_max) = record.buf.min_max();
+
         write!(
             out,
             "{:.1}/{:.1}/{:.1}",
-            to_fixed_number(record.min),
+            to_fixed_number(temp_min),
             record.avg(),
-            to_fixed_number(record.max),
+            to_fixed_number(temp_max),
         )?;
     }
 
