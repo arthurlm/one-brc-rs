@@ -63,8 +63,11 @@ What works:
 What does not work:
 
 - Changing global allocator: using `strace` we can check no allocation are done after file is memory mapped.
+  Tests have been done with [mimalloc](https://docs.rs/mimalloc/latest/mimalloc/) and jemalloc.
+
 - Manual line split: `rayon` crate does the job pretty well.
 - Updating `mmap` flags.
+- Manually setting [core_affinity](https://docs.rs/core_affinity/latest/core_affinity/): it looks like the OS does a pretty good job.
 
 Ideas:
 
